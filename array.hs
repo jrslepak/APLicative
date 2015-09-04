@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE RankNTypes #-}
 module APL where
 
 import Data.Maybe
@@ -25,12 +27,12 @@ splits l xs = let (first, rest) = splitAt l xs in
 
 -- Break an array into frame-of-cells nested form
 nest :: Int -> Array a -> Maybe (Array (Array a))
-nest f_rank (Arr shp elts) =
+nest f_rank (Arr shp xs) =
   if (f_rank > length shp)
   then Nothing
   else let (f_shp, c_shp) = splitAt f_rank shp in
        let c_size = foldr (*) 1 c_shp in
-       let cells = splits c_size elts in
+       let cells = splits c_size xs in
        return $ Arr f_shp $ fmap (Arr c_shp) cells
 
 -- Collapse a nested array into flat form
@@ -57,7 +59,44 @@ frame_expand _ _ _ = Nothing
 -- an ArrayFun which will consume the next (at the appropriate expected rank),
 -- and so on.
 data ArrayFun a b = Fun Int (Array a -> Array b)
+type a :->: b = ArrayFun a b
 arg_rank (Fun r _) = r
 
--- TODO: Apply an individual ArrayFun
--- TODO: Apply an Array of ArrayFuns
+-- Apply an individual ArrayFun
+fun_apply :: (a :->: b) -> Array a -> Maybe (Array b)
+fun_apply (Fun r fn) arr = do
+  -- First, split the argument array into frame-of-arg-cells
+  fc <- nest r arr
+  let arg_cells = elts fc
+  let frm = shape fc
+  -- Apply the function to each cell
+  let ret_cells = map fn arg_cells
+  -- Build the frame-of-result-cells
+  let ret_nested = Arr frm ret_cells
+  -- Produce the collapsed frame-of-result-cells
+  collapse ret_nested
+
+
+-- Apply an Array of ArrayFuns
+arr_apply :: Array (a :->: b) -> Array a -> Maybe (Array b)
+arr_apply fs as = do
+  -- Check that all fs have same expected rank
+  cell_rank <- unique_elt $ fmap arg_rank $ elts fs
+  -- Check for shape compatibility
+  let fn_frame = shape fs
+  let arg_frame = take ((rank as) - cell_rank) (shape as)
+  pr_frame <- if fn_frame `isPrefixOf` arg_frame
+              then Just arg_frame
+              else if arg_frame `isPrefixOf` fn_frame
+                   then Just fn_frame
+                   else Nothing
+  -- Grow the arrays as needed
+  fn_expanded <- frame_expand fn_frame pr_frame fs
+  arg_expanded <- frame_expand arg_frame pr_frame as
+  -- Pointwise application
+  let fn_atoms = (elts fn_expanded)
+  arg_nested <- nest (length pr_frame) arg_expanded
+  let arg_cells = elts arg_nested
+  ret_cells <- sequence $ zipWith fun_apply fn_atoms arg_cells
+  collapse $ Arr pr_frame ret_cells
+
