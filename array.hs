@@ -5,12 +5,14 @@ module APL where
 import Data.Maybe
 import Data.List
 import Control.Monad
+import Control.Applicative
 
 -- An APLish array is made of its shape (integers) and its actual elements
 data Array a = Arr [Int] [a] deriving (Show, Read, Eq)
 shape (Arr shp _) = shp
 rank (Arr shp _) = length shp
 elts (Arr _ xs) = xs
+scalar x = Arr [] [x]
 
 instance Functor Array where
   fmap f (Arr shp xs) = Arr shp (fmap f xs)
@@ -99,4 +101,23 @@ arr_apply fs as = do
   let arg_cells = elts arg_nested
   ret_cells <- sequence $ zipWith fun_apply fn_atoms arg_cells
   collapse $ Arr pr_frame ret_cells
+unsafe_apply :: Array (a :->: b) -> Array a -> Array b
+unsafe_apply fs as = fromJust $ arr_apply fs as
+
+
+-- Turn an ordinary Haskell function into an ArrayFun that operates on scalars
+promote1 :: (a -> b) -> (a :->: b)
+promote1 f = Fun 0 (fmap f)
+
+scalfun :: (a -> b) -> Array (a :->: b)
+scalfun f = Arr [] [promote1 f]
+
+-- We can also do this for binary functions.
+promote2 :: forall a b c. (a -> b -> c) -> (a :->: (b :->: c))
+promote2 f = Fun 0 (\ as ->
+                      (Arr []
+                       [Fun 0 (\ bs ->
+                                 (unsafe_apply
+                                  (unsafe_apply (scalfun (promote1 . f)) as)
+                                  bs))]))
 
