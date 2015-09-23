@@ -121,3 +121,14 @@ promote2 f = Fun 0 (\ as ->
                                   (unsafe_apply (scalfun (promote1 . f)) as)
                                   bs))]))
 
+-- A "promote" function can be written for any desired arity, but there's a more
+-- concise solution. Instead of setting up all the function-to-ArrayFun
+-- promotions statically, we can just work with ordinary functions until it's
+-- time to apply them.
+-- An (a -> b -> c -> d) can get converted to an (a :->: b -> c -> d), so that
+-- application produces an array of (b -> c -> d), which can each be promoted to
+-- a (b :->: c -> d), and so on. This accumulates a growing (or rather, a
+-- non-shrinking) frame of result cells.
+instance Applicative Array where
+  pure x = Arr [] [x]
+  f <*> xs = unsafe_apply (fmap promote1 f) xs
